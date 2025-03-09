@@ -164,3 +164,44 @@ class RandomForest:
         if x[node.feature_idx] <= node.threshold:
             return self._predict_with_path(x, node.left, path)
         return self._predict_with_path(x, node.right, path)
+
+    def visualize_forest_with_transform(self, screen, feature_names, selected_tree=None, zoom_level=1.0, camera_offset=[0, 0]):
+        """Visualize all trees in the forest or a selected tree with camera transform"""
+        if not self.trees:
+            return
+            
+        n_built_trees = min(self.current_tree_index, len(self.trees))
+        
+        if selected_tree is not None and 0 <= selected_tree < n_built_trees:
+
+            self.trees[selected_tree].visualize_tree_with_transform(screen, feature_names, zoom_level, camera_offset)
+            
+            tree_text = f"Tree {selected_tree + 1}/{n_built_trees}"
+            text_surface = get_font(18, bold=True).render(tree_text, True, COLORS['text'])
+            text_rect = text_surface.get_rect(topleft=(140, 100))
+            screen.blit(text_surface, text_rect)
+        else:
+            tree_spacing = WIDTH / (n_built_trees + 1)
+            
+            for i in range(n_built_trees):
+                # Apply camera transform to tree positions
+                x = ((i + 1) * tree_spacing) * zoom_level + camera_offset[0]
+                y = 100 * zoom_level + camera_offset[1]
+                
+                tree_color = COLORS['primary_light'] if i == selected_tree else COLORS['primary_dark']
+                
+                # Scale sizes based on zoom level
+                rect_size = 15 * zoom_level
+                circle_radius = 20 * zoom_level
+                line_width = max(1, int(2 * zoom_level))
+                font_size = max(8, int(14 * zoom_level))
+                
+                pygame.draw.rect(screen, COLORS['node_border'], 
+                            (int(x) - rect_size/2, y + rect_size, rect_size, 15 * zoom_level))
+                
+                pygame.draw.circle(screen, tree_color, (int(x), int(y)), int(circle_radius))
+                pygame.draw.circle(screen, COLORS['node_border'], (int(x), int(y)), int(circle_radius), line_width)
+                
+                text_surface = get_font(font_size).render(str(i+1), True, COLORS['text'])
+                text_rect = text_surface.get_rect(center=(int(x), int(y)))
+                screen.blit(text_surface, text_rect)
