@@ -33,6 +33,13 @@ class RandomForestVisualizer:
         self.animation_timer = 0
         self.animation_speed = 30  
         
+        # Camera/viewport settings for zoomable and pannable view
+        self.zoom_level = 1.0
+        self.camera_offset = [0, 0]
+        self.is_dragging = False
+        self.drag_start = None
+        self.min_zoom = 0.5
+        self.max_zoom = 3.0
 
         self.buttons = []
         self.sliders = []
@@ -71,7 +78,7 @@ class RandomForestVisualizer:
                 "About", "about", True, False
             )
             self.buttons.append(about_btn)
-        
+
         elif self.state == "training":
           
             continue_btn = Button(
@@ -119,6 +126,13 @@ class RandomForestVisualizer:
                     "About", "about", True, False
                 )
                 self.buttons.append(about_btn)
+                
+                # Reset view button
+                reset_view_btn = Button(
+                    pygame.Rect(WIDTH - 240, HEIGHT - 80, 100, 40),
+                    "Reset View", "reset_view", True, False
+                )
+                self.buttons.append(reset_view_btn)
         
         elif self.state == "testing":
     
@@ -156,7 +170,14 @@ class RandomForestVisualizer:
                 "toggle_view", True, False
             )
             self.buttons.append(toggle_btn)
-
+            
+            # Add reset view button in testing mode too
+            if self.show_predictions:
+                reset_view_btn = Button(
+                    pygame.Rect(WIDTH - 320, HEIGHT - 80, 100, 40),
+                    "Reset View", "reset_view", True, False
+                )
+                self.buttons.append(reset_view_btn)
 
 
         elif self.state == "about":
@@ -183,6 +204,8 @@ class RandomForestVisualizer:
         self.state = "training"
         self.selected_tree = 0
         
+        # Reset camera transform
+        self.reset_view()
 
         self._create_ui_elements()
     
@@ -230,8 +253,15 @@ class RandomForestVisualizer:
         self.viz_step = 0
         self.show_predictions = False
         
+        # Reset the view when entering testing mode
+        self.reset_view()
 
         self._create_ui_elements()
+        
+    def reset_view(self):
+        """Reset the camera to default position and zoom"""
+        self.zoom_level = 1.0
+        self.camera_offset = [0, 0]
     
     def handle_events(self):
         """Handle pygame events"""
@@ -258,8 +288,91 @@ class RandomForestVisualizer:
                         self.n_trees = int(slider.value)
                     elif slider.label == "Max Tree Depth":
                         self.max_depth = int(slider.value)
+            
+            # Handle zooming with mouse wheel
+            if event.type == pygame.MOUSEWHEEL:
+                if self._is_in_visualization_area(mouse_pos):
+                    # Scale the zoom based on the wheel movement
+                    zoom_change = event.y * 0.1  # Adjust sensitivity as needed
+                    new_zoom = self.zoom_level + zoom_change
+                    
+                    # Clamp zoom level to min/max values
+                    new_zoom = max(self.min_zoom, min(self.max_zoom, new_zoom))
+                    
+                    # Calculate zoom around the mouse position
+                    if new_zoom != self.zoom_level:
+                        mouse_x, mouse_y = mouse_pos
+                        
+                        # Get world coordinates of mouse before zoom
+                        world_x = (mouse_x - self.camera_offset[0]) / self.zoom_level
+                        world_y = (mouse_y - self.camera_offset[1]) / self.zoom_level
+                        
+                        # Update zoom level
+                        self.zoom_level = new_zoom
+                        
+
+                        self.camera_offset[0] = mouse_x - world_x * self.zoom_level
+                        self.camera_offset[1] = mouse_y - world_y * self.zoom_level
+            
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left mouse button
+                    if self._is_in_visualization_area(mouse_pos) and not self._is_over_ui():
+                        self.is_dragging = True
+                        self.drag_start = mouse_pos
+            
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:  # Left mouse button
+                    self.is_dragging = False
+            
+            elif event.type == pygame.MOUSEMOTION:
+                if self.is_dragging:
+                    # Calculate drag distance
+                    dx = event.pos[0] - self.drag_start[0]
+                    dy = event.pos[1] - self.drag_start[1]
+                    
+                    # Update camera offset
+                    self.camera_offset[0] += dx
+                    self.camera_offset[1] += dy
+                    
+                    # Update drag start position for next frame
+                    self.drag_start = event.pos
         
         return True  # Continue running
+    
+    def _is_in_visualization_area(self, mouse_pos):
+        """Check if mouse is in the main visualization area (excluding UI elements)"""
+        x, y = mouse_pos
+        
+        if self.state == "training":
+            # Tree visualization area (exclude sidebar and bottom panel)
+            sidebar_width = 120
+            bottom_panel_height = 80
+            return x > sidebar_width and y > 80 and y < HEIGHT - bottom_panel_height
+        
+        elif self.state == "testing" and self.show_predictions:
+            # Decision path visualization area
+            sidebar_width = 250
+            bottom_panel_height = 80
+            return x < WIDTH - sidebar_width and y > 80 and y < HEIGHT - bottom_panel_height
+        
+        return False
+    
+    def _is_over_ui(self):
+        """Check if mouse is over a UI element"""
+        mouse_pos = pygame.mouse.get_pos()
+        
+        # Check if mouse is over any button
+        for button in self.buttons:
+            if button.rect.collidepoint(mouse_pos):
+                return True
+        
+        # Check if mouse is over any slider
+        for slider in self.sliders:
+            if slider.rect.collidepoint(mouse_pos):
+                return True
+                
+        return False
     
     def _handle_button_action(self, action):
         """Handle button actions"""
@@ -299,6 +412,7 @@ class RandomForestVisualizer:
         
         elif action == "back_to_viz":
             self.state = "training"
+            self.reset_view()
             self._create_ui_elements()
             
         elif action == "reset":
@@ -309,39 +423,35 @@ class RandomForestVisualizer:
             self._create_ui_elements()
 
         elif action == "about":
-            
             self.state = "about"
             self._create_ui_elements()
         
         elif action == "back_from_about":
-        
             self.state = "setup"
             self._create_ui_elements()
+            
+        elif action == "reset_view":
+            self.reset_view()
     
     def update(self):
         """Update visualizer state"""
         current_time = pygame.time.get_ticks()
         
- 
         if self.state == "testing" and self.test_predictions is not None:
             if current_time - self.animation_timer > self.animation_speed:
-
                 self.animation_timer = current_time
                 
-
                 max_steps = 0
                 for tree_idx in range(len(self.forest.trees)):
                     if tree_idx < len(self.prediction_paths):
                         path_length = len(self.prediction_paths[tree_idx][self.selected_test_sample])
                         max_steps = max(max_steps, path_length)
                 
-            
                 if self.viz_step < max_steps:
                     self.viz_step += 1
     
     def draw(self, screen):
         """Draw the current state of the visualizer"""
-   
         screen.fill(COLORS['background'])
         
         # Draw a header area
@@ -354,6 +464,18 @@ class RandomForestVisualizer:
         title_rect = title_surface.get_rect(midtop=(WIDTH//2, 20))
         screen.blit(title_surface, title_rect)
         
+        # Create the zoom indicator text
+        if (self.state == "training" or (self.state == "testing" and self.show_predictions)) and self.zoom_level != 1.0:
+            zoom_text = f"Zoom: {self.zoom_level:.1f}x"
+            zoom_surface = get_font(14).render(zoom_text, True, COLORS['text_secondary'])
+            zoom_rect = zoom_surface.get_rect(topright=(WIDTH - 20, 85))
+            screen.blit(zoom_surface, zoom_rect)
+            
+            # Hint for panning
+            hint_text = "Drag to pan, scroll to zoom"
+            hint_surface = get_font(12).render(hint_text, True, COLORS['text_secondary'])
+            hint_rect = hint_surface.get_rect(topright=(WIDTH - 20, 105))
+            screen.blit(hint_surface, hint_rect)
 
         if self.state == "setup":
             self._draw_setup(screen)
@@ -499,32 +621,27 @@ class RandomForestVisualizer:
         if not self.forest:
             return
             
-
         sidebar_width = 120
         sidebar_rect = pygame.Rect(0, 80, sidebar_width, HEIGHT - 80)
         pygame.draw.rect(screen, COLORS['panel'], sidebar_rect)
         pygame.draw.line(screen, COLORS['node_border'], 
                         (sidebar_width, 80), (sidebar_width, HEIGHT), 1)
         
-
         sidebar_title = get_font(16, bold=True).render("Trees", True, COLORS['text'])
         title_rect = sidebar_title.get_rect(center=(sidebar_width//2, 90))
-        screen.blit(sidebar_title, title_rect)
+        screen.blit(sidebar_title, title_rect) 
         
-
         n_built_trees = self.forest.current_tree_index
         progress_text = f"Built: {n_built_trees}/{self.forest.n_trees}"
         progress_surface = get_font(14).render(progress_text, True, COLORS['text'])
         progress_rect = progress_surface.get_rect(center=(sidebar_width//2, 110))
         screen.blit(progress_surface, progress_rect)
         
-
         bar_width = 80
         bar_height = 8
         bar_x = (sidebar_width - bar_width) // 2
         bar_y = 125
         
-
         pygame.draw.rect(screen, COLORS['background'], (bar_x, bar_y, bar_width, bar_height), border_radius=4)
 
         filled_width = int(bar_width * self.forest.build_progress / 100)
@@ -534,13 +651,10 @@ class RandomForestVisualizer:
 
         pygame.draw.rect(screen, COLORS['node_border'], (bar_x, bar_y, bar_width, bar_height), width=1, border_radius=4)
         
-  
         tree_y = 200
         for i in range(n_built_trees):
-
             tree_rect = pygame.Rect(10, tree_y + i * 40, sidebar_width - 20, 30)
             
-
             if i == self.selected_tree:
                 pygame.draw.rect(screen, COLORS['primary_light'], tree_rect, border_radius=4)
                 pygame.draw.rect(screen, COLORS['primary_dark'], tree_rect, width=1, border_radius=4)
@@ -548,27 +662,32 @@ class RandomForestVisualizer:
                 pygame.draw.rect(screen, COLORS['background'], tree_rect, border_radius=4)
                 pygame.draw.rect(screen, COLORS['node_border'], tree_rect, width=1, border_radius=4)
             
-
             tree_label = f"Tree {i + 1}"
             tree_surface = get_font(14).render(tree_label, True, COLORS['text'])
             tree_rect = tree_surface.get_rect(center=(sidebar_width//2, tree_y + i * 40 + 15))
             screen.blit(tree_surface, tree_rect)
         
-
         content_x = sidebar_width + 20
         content_width = WIDTH - sidebar_width - 40
         
         if self.selected_tree < self.forest.current_tree_index:
-
             param_text = f"Depth: {self.max_depth} | Features: {self.forest.trees[self.selected_tree].n_features}"
             param_surface = get_font(14).render(param_text, True, COLORS['text_secondary'])
             param_rect = param_surface.get_rect(topleft=(content_x, 100))
             screen.blit(param_surface, param_rect)
             
-
-            self.forest.visualize_forest(screen, self.feature_names, self.selected_tree)
+            # Create a clipping rect for the tree visualization area
+            viz_rect = pygame.Rect(sidebar_width, 80, WIDTH - sidebar_width, HEIGHT - 160)
+            orig_clip = screen.get_clip()
+            screen.set_clip(viz_rect)
+            
+            # Visualize the tree with the current zoom level and offset
+            self.forest.visualize_forest_with_transform(screen, self.feature_names, self.selected_tree, 
+                                                self.zoom_level, self.camera_offset)
+            
+            # Restore original clipping
+            screen.set_clip(orig_clip)
         else:
-
             message = "Build your first tree to begin visualization"
             msg_surface = get_font(18).render(message, True, COLORS['text_secondary'])
             msg_rect = msg_surface.get_rect(center=(content_x + content_width//2, HEIGHT//2))
@@ -664,42 +783,56 @@ class RandomForestVisualizer:
         path_rect = path_surface.get_rect(topleft=(20, 160))
         screen.blit(path_surface, path_rect)
         
-
         current_tree_idx = self.selected_tree
         
         if (current_tree_idx < len(self.forest.trees) and 
             current_tree_idx < len(self.prediction_paths) and
             self.selected_test_sample < len(self.prediction_paths[current_tree_idx])):
             
-
             tree = self.forest.trees[current_tree_idx]
             path = self.prediction_paths[current_tree_idx][self.selected_test_sample]
             
-
-            tree.visualize_tree(screen, self.feature_names)
+            # Create a clipping rect for the tree visualization area
+            viz_rect = pygame.Rect(0, 160, WIDTH - 250, HEIGHT - 240)
+            orig_clip = screen.get_clip()
+            screen.set_clip(viz_rect)
             
-
+            # Draw the tree with camera transform
+            tree.visualize_tree_with_transform(screen, self.feature_names, 
+                                            self.zoom_level, self.camera_offset)
+            
+            # Draw path highlighting with camera transform
             for i in range(min(self.viz_step, len(path))):
                 node = path[i]
                 if node and hasattr(node, 'pos'):
-
-                    highlight_radius = node.radius + 5
-                    pygame.draw.circle(screen, COLORS['highlight'], node.pos, highlight_radius, 3)
+                    # Apply zoom and offset to node position
+                    transformed_pos = (
+                        int(node.pos[0] * self.zoom_level + self.camera_offset[0]),
+                        int(node.pos[1] * self.zoom_level + self.camera_offset[1])
+                    )
+                    transformed_radius = int(node.radius * self.zoom_level)
                     
-
+                    # Draw highlight around the node
+                    highlight_radius = transformed_radius + int(5 * self.zoom_level)
+                    pygame.draw.circle(screen, COLORS['highlight'], transformed_pos, highlight_radius, 3)
+                    
+                    # Draw decision path line
                     if i == self.viz_step - 1 and not node.is_leaf_node() and i+1 < len(path):
                         next_node = path[i+1]
                         
-
                         if hasattr(next_node, 'pos'):
-                            start_pos = node.pos
-                            end_pos = next_node.pos
+                            # Apply zoom and offset to next node position
+                            next_transformed_pos = (
+                                int(next_node.pos[0] * self.zoom_level + self.camera_offset[0]),
+                                int(next_node.pos[1] * self.zoom_level + self.camera_offset[1])
+                            )
                             
-
+                            # Draw line between current and next node
                             pygame.draw.line(screen, COLORS['highlight'], 
-                                            start_pos, end_pos, 4)
+                                        transformed_pos, next_transformed_pos, 
+                                        max(2, int(4 * self.zoom_level)))
                             
-
+                            # Draw decision text
                             x_sample = self.X_test[self.selected_test_sample]
                             feature_val = x_sample[node.feature_idx]
                             
@@ -709,25 +842,39 @@ class RandomForestVisualizer:
                             else:
                                 decision_text += f" > {node.threshold:.2f} (Right)"
                             
-
-                            decision_surface = get_font(12).render(decision_text, True, COLORS['background'])
-                            decision_rect = decision_surface.get_rect(center=((start_pos[0] + end_pos[0])//2, 
-                                                                           (start_pos[1] + end_pos[1])//2 - 15))
+                            # Scale text size based on zoom
+                            font_size = max(8, int(12 * self.zoom_level))
+                            decision_surface = get_font(font_size).render(decision_text, True, COLORS['background'])
                             
-
+                            # Position at midpoint of the line
+                            mid_x = (transformed_pos[0] + next_transformed_pos[0]) // 2
+                            mid_y = (transformed_pos[1] + next_transformed_pos[1]) // 2 - int(15 * self.zoom_level)
+                            decision_rect = decision_surface.get_rect(center=(mid_x, mid_y))
+                            
+                            # Draw background for text
                             bg_rect = decision_rect.copy()
                             bg_rect.inflate_ip(10, 6)
                             pygame.draw.rect(screen, COLORS['highlight'], bg_rect, border_radius=4)
                             
                             # Draw text
                             screen.blit(decision_surface, decision_rect)
-                            
-
+                    
+                    # Show prediction for leaf nodes
                     if node.is_leaf_node() and i == len(path) - 1:
                         pred_text = f"Tree predicts: {self.target_names[node.value]}"
-                        pred_surface = get_font(14, bold=True).render(pred_text, True, COLORS['highlight'])
-                        pred_rect = pred_surface.get_rect(center=(node.pos[0], node.pos[1] + node.radius + 25))
+                        
+                        # Scale text size based on zoom
+                        font_size = max(10, int(14 * self.zoom_level))
+                        pred_surface = get_font(font_size, bold=True).render(pred_text, True, COLORS['highlight'])
+                        
+                        pred_rect = pred_surface.get_rect(center=(
+                            transformed_pos[0], 
+                            transformed_pos[1] + transformed_radius + int(25 * self.zoom_level)
+                        ))
                         screen.blit(pred_surface, pred_rect)
+            
+            # Restore original clipping
+            screen.set_clip(orig_clip)
     
     def _draw_voting_info(self, screen):
         """Draw information about how the trees vote for the final prediction"""

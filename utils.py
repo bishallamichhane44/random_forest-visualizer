@@ -36,9 +36,8 @@ COLORS = {
 
 
 def get_font(size, bold=False):
-    if bold:
-        return pygame.font.SysFont('Arial', size, bold=True)
-    return pygame.font.SysFont('Arial', size)
+    """Get a font with the specified size and weight"""
+    return pygame.font.SysFont("Arial", size, bold=bold)
 
 
 def load_dataset():

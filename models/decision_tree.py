@@ -208,3 +208,108 @@ class DecisionTree:
         # Recursively draw children
         self._draw_nodes(screen, node.left, feature_names, highlight)
         self._draw_nodes(screen, node.right, feature_names, highlight)
+
+    def visualize_tree_with_transform(self, screen, feature_names, zoom_level=1.0, camera_offset=[0, 0]):
+        """Visualize the tree with camera transform applied"""
+        if not self.root:
+            return
+        
+        from utils import WIDTH
+        self._assign_positions(self.root, WIDTH//2, 150, WIDTH//3, 120)
+        
+        # Draw edges with transform
+        self._draw_edges_with_transform(screen, self.root, zoom_level, camera_offset)
+        
+        # Draw nodes with transform
+        self._draw_nodes_with_transform(screen, self.root, feature_names, zoom_level, camera_offset)
+
+    def _draw_edges_with_transform(self, screen, node, zoom_level, camera_offset, highlight=None):
+        """Draw tree edges with camera transform applied"""
+        if node.is_leaf_node() or node.left is None:
+            return
+        
+        start_x = node.pos[0] * zoom_level + camera_offset[0]
+        start_y = node.pos[1] * zoom_level + camera_offset[1]
+        
+        left_x = node.left.pos[0] * zoom_level + camera_offset[0]
+        left_y = node.left.pos[1] * zoom_level + camera_offset[1]
+        
+        right_x = node.right.pos[0] * zoom_level + camera_offset[0]
+        right_y = node.right.pos[1] * zoom_level + camera_offset[1]
+        
+
+        line_width = max(1, int(2 * zoom_level))
+        
+        pygame.draw.line(screen, COLORS['node_border'], 
+                    (int(start_x), int(start_y)), (int(left_x), int(left_y)), line_width)
+        
+        pygame.draw.line(screen, COLORS['node_border'], 
+                    (int(start_x), int(start_y)), (int(right_x), int(right_y)), line_width)
+        
+
+        self._draw_edges_with_transform(screen, node.left, zoom_level, camera_offset, highlight)
+        self._draw_edges_with_transform(screen, node.right, zoom_level, camera_offset, highlight)
+
+    def _draw_nodes_with_transform(self, screen, node, feature_names, zoom_level, camera_offset, highlight=None):
+        """Draw tree nodes with camera transform applied"""
+        if node is None:
+            return
+        
+        # Apply zoom and camera offset to node position
+        x = node.pos[0] * zoom_level + camera_offset[0]
+        y = node.pos[1] * zoom_level + camera_offset[1]
+        transformed_pos = (int(x), int(y))
+        
+        # Scale radius based on zoom
+        transformed_radius = int(node.radius * zoom_level)
+        
+        # Determine node color
+        node_color = COLORS['leaf_node'] if node.is_leaf_node() else COLORS['node']
+        
+        if highlight == node:
+            node_color = COLORS['highlight']
+        
+        # Draw shadow with transform
+        shadow_offset = int(2 * zoom_level)
+        pygame.draw.circle(screen, COLORS['node_border'], 
+                        (transformed_pos[0] + shadow_offset, transformed_pos[1] + shadow_offset), 
+                        transformed_radius)
+        
+        # Draw node
+        pygame.draw.circle(screen, node_color, transformed_pos, transformed_radius)
+        pygame.draw.circle(screen, COLORS['node_border'], transformed_pos, transformed_radius, max(1, int(zoom_level)))
+        
+        # Calculate appropriate font size based on zoom
+        font_size = max(8, int(12 * zoom_level))
+        small_font_size = max(6, int(10 * zoom_level))
+        
+        # Draw node text
+        if node.is_leaf_node():
+            class_text = f"Class {node.value}"
+            text_surface = get_font(font_size).render(class_text, True, COLORS['text'])
+            text_rect = text_surface.get_rect(center=transformed_pos)
+            screen.blit(text_surface, text_rect)
+        else:
+            feature_name = feature_names[node.feature_idx].split(' (')[0]
+            if len(feature_name) > 10:
+                feature_name = feature_name[:10] + ".."
+            feature_text = f"{feature_name}"
+            threshold_text = f"≤ {node.threshold:.2f}"
+            
+            text_surface = get_font(font_size).render(feature_text, True, COLORS['text'])
+            threshold_surface = get_font(font_size).render(threshold_text, True, COLORS['text'])
+            
+            text_rect = text_surface.get_rect(center=(int(x), int(y - 8 * zoom_level)))
+            threshold_rect = threshold_surface.get_rect(center=(int(x), int(y + 8 * zoom_level)))
+            screen.blit(text_surface, text_rect)
+            screen.blit(threshold_surface, threshold_rect)
+        
+        # Draw sample count
+        samples_text = f"n={node.samples}"
+        samples_surface = get_font(small_font_size).render(samples_text, True, COLORS['text_secondary'])
+        samples_rect = samples_surface.get_rect(center=(int(x), int(y + transformed_radius + 10 * zoom_level)))
+        screen.blit(samples_surface, samples_rect)
+        
+        # Recursively draw children
+        self._draw_nodes_with_transform(screen, node.left, feature_names, zoom_level, camera_offset, highlight)
+        self._draw_nodes_with_transform(screen, node.right, feature_names, zoom_level, camera_offset, highlight)
