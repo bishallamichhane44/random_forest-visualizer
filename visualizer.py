@@ -522,7 +522,7 @@ class RandomForestVisualizer:
         pygame.draw.rect(screen, COLORS['panel'], panel_rect, border_radius=5)
         
 
-        title_surface = get_font(18, bold=True).render("Iris Dataset Preview", True, COLORS['text'])
+        title_surface = get_font(18, bold=True).render("Crop Recommendation Dataset", True, COLORS['text'])
         title_rect = title_surface.get_rect(center=(WIDTH//2, plot_y - 20))
         screen.blit(title_surface, title_rect)
         
@@ -590,14 +590,15 @@ class RandomForestVisualizer:
             y_scaled = plot_y + plot_height - (self.X[i, 1] - y_min) / (y_max - y_min) * plot_height
             
 
-            point_color = [
-                COLORS['feature_1'], 
-                COLORS['feature_2'], 
-                COLORS['feature_3']
-            ][self.y[i]]
+        feature_colors = [
+            COLORS['feature_1'], COLORS['feature_2'], COLORS['feature_3'],
+            COLORS['feature_4'], COLORS['feature_5'], COLORS['feature_6'],
+            COLORS['feature_7'], COLORS['feature_8']
+        ]
+        point_color = feature_colors[self.y[i] % len(feature_colors)]
             
             # Draw point
-            pygame.draw.circle(screen, point_color, (int(x_scaled), int(y_scaled)), 4)
+        pygame.draw.circle(screen, point_color, (int(x_scaled), int(y_scaled)), 4)
         
         # Draw legend
         legend_x = plot_x + plot_width - 120
@@ -605,15 +606,29 @@ class RandomForestVisualizer:
         
         legend_title = get_font(14, bold=True).render("Classes:", True, COLORS['text'])
         screen.blit(legend_title, (legend_x, legend_y - 25))
+
+        feature_colors = [
+        COLORS['feature_1'], COLORS['feature_2'], COLORS['feature_3'],
+        COLORS['feature_4'], COLORS['feature_5'], COLORS['feature_6'],
+        COLORS['feature_7'], COLORS['feature_8']
+    ]
         
-        for i, name in enumerate(self.target_names):
+        max_legend_items = 8
+        legend_classes = self.target_names[:max_legend_items]
+        if len(self.target_names) > max_legend_items:
+            legend_classes.append("...")
 
-            pygame.draw.circle(screen, 
-                             [COLORS['feature_1'], COLORS['feature_2'], COLORS['feature_3']][i], 
-                             (legend_x + 7, legend_y + i * 25 + 7), 7)
+        for i, name in enumerate(legend_classes):
+            if name == "...":
+                text = "... and others"
+                pygame.draw.circle(screen, COLORS['text_secondary'], 
+                                (legend_x + 7, legend_y + i * 25 + 7), 7)
+            else:
+                text = name
+                pygame.draw.circle(screen, feature_colors[i % len(feature_colors)], 
+                                (legend_x + 7, legend_y + i * 25 + 7), 7)
             
-
-            label_surface = get_font(14).render(name, True, COLORS['text'])
+            label_surface = get_font(14).render(text, True, COLORS['text'])
             screen.blit(label_surface, (legend_x + 20, legend_y + i * 25))
     
     def _draw_training(self, screen):
