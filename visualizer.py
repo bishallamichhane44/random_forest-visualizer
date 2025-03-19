@@ -6,6 +6,7 @@ from sklearn.model_selection import train_test_split
 from models.random_forest import RandomForest
 from ui.button import Button
 from ui.slider import Slider
+from ui.input_field import InputField
 from utils import WIDTH, HEIGHT, COLORS, get_font, load_dataset
 
 class RandomForestVisualizer:
@@ -31,7 +32,11 @@ class RandomForestVisualizer:
         self.prediction_paths = None
         self.viz_step = 0
         self.animation_timer = 0
-        self.animation_speed = 30  
+        self.animation_speed = 30 
+        self.custom_sample = None
+        self.custom_prediction = None
+        self.custom_paths = None 
+        self.using_custom_sample = False
         
         # Camera/viewport settings for zoomable and pannable view
         self.zoom_level = 1.0
@@ -43,14 +48,279 @@ class RandomForestVisualizer:
 
         self.buttons = []
         self.sliders = []
+        self.input_fields = []  
         self._create_ui_elements()
 
         self.show_predictions = False
+
+    def _draw_custom_decision_paths(self, screen):
+
+        # Draw title
+        path_title = "Custom Sample Decision Path Animation"
+        path_surface = get_font(18, bold=True).render(path_title, True, COLORS['text'])
+        path_rect = path_surface.get_rect(topleft=(20, 160))
+        screen.blit(path_surface, path_rect)
+        
+        current_tree_idx = self.selected_tree
+        
+        if (current_tree_idx < len(self.forest.trees) and 
+            self.custom_paths and current_tree_idx < len(self.custom_paths)):
+            
+            tree = self.forest.trees[current_tree_idx]
+            path = self.custom_paths[current_tree_idx][0]  
+            
+            # Create a clipping rect for the tree visualization area
+            viz_rect = pygame.Rect(0, 160, WIDTH - 250, HEIGHT - 240)
+            orig_clip = screen.get_clip()
+            screen.set_clip(viz_rect)
+            
+            # Draw the tree with camera transform
+            tree.visualize_tree_with_transform(screen, self.feature_names, 
+                                            self.zoom_level, self.camera_offset)
+            
+            # Draw path highlighting with camera transform
+            for i in range(min(self.viz_step, len(path))):
+                node = path[i]
+                if node and hasattr(node, 'pos'):
+                    # Apply zoom and offset to node position
+                    transformed_pos = (
+                        int(node.pos[0] * self.zoom_level + self.camera_offset[0]),
+                        int(node.pos[1] * self.zoom_level + self.camera_offset[1])
+                    )
+                    transformed_radius = int(node.radius * self.zoom_level)
+                    
+                    # Draw highlight around the node
+                    highlight_radius = transformed_radius + int(5 * self.zoom_level)
+                    pygame.draw.circle(screen, COLORS['highlight'], transformed_pos, highlight_radius, 3)
+                    
+                    # Draw decision path line
+                    if i == self.viz_step - 1 and not node.is_leaf_node() and i+1 < len(path):
+                        next_node = path[i+1]
+                        
+                        if hasattr(next_node, 'pos'):
+                            # Apply zoom and offset to next node position
+                            next_transformed_pos = (
+                                int(next_node.pos[0] * self.zoom_level + self.camera_offset[0]),
+                                int(next_node.pos[1] * self.zoom_level + self.camera_offset[1])
+                            )
+                            
+                            # Draw line between current and next node
+                            pygame.draw.line(screen, COLORS['highlight'], 
+                                        transformed_pos, next_transformed_pos, 
+                                        max(2, int(4 * self.zoom_level)))
+                            
+                            # Draw decision text
+                            feature_val = self.custom_sample[node.feature_idx]
+                            
+                            decision_text = f"Feature {node.feature_idx} = {feature_val:.2f}"
+                            if feature_val <= node.threshold:
+                                decision_text += f" ≤ {node.threshold:.2f} (Left)"
+                            else:
+                                decision_text += f" > {node.threshold:.2f} (Right)"
+                            
+                            # Scale text size based on zoom
+                            font_size = max(8, int(12 * self.zoom_level))
+                            decision_surface = get_font(font_size).render(decision_text, True, COLORS['background'])
+                            
+                            # Position at midpoint of the line
+                            mid_x = (transformed_pos[0] + next_transformed_pos[0]) // 2
+                            mid_y = (transformed_pos[1] + next_transformed_pos[1]) // 2 - int(15 * self.zoom_level)
+                            decision_rect = decision_surface.get_rect(center=(mid_x, mid_y))
+                            
+                            # Draw background for text
+                            bg_rect = decision_rect.copy()
+                            bg_rect.inflate_ip(10, 6)
+                            pygame.draw.rect(screen, COLORS['highlight'], bg_rect, border_radius=4)
+                            
+                            # Draw text
+                            screen.blit(decision_surface, decision_rect)
+                    
+                    # Show prediction for leaf nodes
+                    if node.is_leaf_node() and i == len(path) - 1:
+                        pred_text = f"Tree predicts: {self.target_names[node.value]}"
+                        
+                        # Scale text size based on zoom
+                        font_size = max(10, int(14 * self.zoom_level))
+                        pred_surface = get_font(font_size, bold=True).render(pred_text, True, COLORS['highlight'])
+                        
+                        pred_rect = pred_surface.get_rect(center=(
+                            transformed_pos[0], 
+                            transformed_pos[1] + transformed_radius + int(25 * self.zoom_level)
+                        ))
+                        screen.blit(pred_surface, pred_rect)
+            
+            # Restore original clipping
+            screen.set_clip(orig_clip)
+
+    def _draw_custom_voting_info(self, screen):
+        """Draw voting information for the custom sample"""
+        votes = {}  # Dictionary to count votes
+        
+        # Count votes from each tree
+        for tree_idx, tree in enumerate(self.forest.trees):
+            if self.custom_paths and tree_idx < len(self.custom_paths):
+                # Get the leaf node from the path
+                path = self.custom_paths[tree_idx][0]  # First (and only) sample
+                if path and path[-1].is_leaf_node():
+                    prediction = path[-1].value
+                    tree_name = f"Tree {tree_idx + 1}"
+                    
+                    if prediction not in votes:
+                        votes[prediction] = []
+                    votes[prediction].append(tree_name)
+        
+        # Draw title
+        vote_title = "Random Forest Voting (Custom Sample)"
+        vote_surface = get_font(20, bold=True).render(vote_title, True, COLORS['text'])
+        vote_rect = vote_surface.get_rect(topleft=(30, 160))
+        screen.blit(vote_surface, vote_rect)
+        
+        # Set up chart dimensions
+        chart_x = 50
+        chart_width = WIDTH - chart_x - 300
+        chart_y = 220
+        bar_height = 70
+        spacing = 20
+        
+        # Calculate total votes
+        total_votes = sum(len(trees) for trees in votes.values())
+        
+        # Sort classes by vote count
+        sorted_classes = sorted(votes.keys(), key=lambda k: len(votes[k]), reverse=True)
+        
+        # Draw bars for each class
+        for i, class_idx in enumerate(sorted_classes):
+            class_name = self.target_names[class_idx]
+            vote_count = len(votes[class_idx])
+            percentage = (vote_count / total_votes) * 100
+            
+            # Draw bar background
+            bar_rect = pygame.Rect(chart_x, chart_y + i * (bar_height + spacing), chart_width, bar_height)
+            pygame.draw.rect(screen, COLORS['panel'], bar_rect, border_radius=5)
+            
+            # Draw filled portion of bar
+            fill_width = int(chart_width * vote_count / total_votes)
+            if fill_width > 0:
+                fill_rect = pygame.Rect(chart_x, chart_y + i * (bar_height + spacing), fill_width, bar_height)
+                
+                # Use accent color for the winning prediction, primary color for others
+                if class_idx == self.custom_prediction:
+                    fill_color = COLORS['accent'] 
+                else:
+                    fill_color = COLORS['primary']
+                
+                pygame.draw.rect(screen, fill_color, fill_rect, border_radius=5)
+            
+            # Draw class name and vote count
+            class_text = f"{class_name}: {vote_count} votes ({percentage:.1f}%)"
+            class_surface = get_font(16, bold=True).render(class_text, True, COLORS['text'])
+            screen.blit(class_surface, (chart_x + 10, chart_y + i * (bar_height + spacing) + 10))
+            
+            # Draw list of trees that voted for this class
+            tree_text = ", ".join(votes[class_idx])
+            if len(tree_text) > 50:
+                tree_text = tree_text[:47] + "..."
+            tree_surface = get_font(12, bold=True).render(tree_text, True, COLORS['background'])
+            screen.blit(tree_surface, (chart_x + 10, chart_y + i * (bar_height + spacing) + bar_height - 30))
+        
+        # Draw box with final prediction
+        result_y = chart_y + len(sorted_classes) * (bar_height + spacing) + 20
+        
+        result_box = pygame.Rect(chart_x, result_y, 300, 60)
+        pygame.draw.rect(screen, COLORS['panel'], result_box, border_radius=5)
+        
+        result_label = get_font(14).render("Final Forest Prediction:", True, COLORS['text_secondary'])
+        screen.blit(result_label, (chart_x + 15, result_y + 10))
+        
+        # Draw prediction text
+        result_text = self.target_names[self.custom_prediction]
+        result_surface = get_font(24, bold=True).render(result_text, True, COLORS['accent'])
+        screen.blit(result_surface, (chart_x + 15, result_y + 30))
+
+    def _draw_custom_testing(self, screen):
+        """Draw testing visualization for custom input"""
+        if not self.forest or self.custom_prediction is None:
+            return
+        
+        # Draw title
+        title = get_font(24, bold=True).render("Custom Sample Prediction", True, COLORS['text'])
+        title_rect = title.get_rect(center=(WIDTH//2, 100))
+        screen.blit(title, title_rect)
+        
+        # Draw sidebar
+        sidebar_width = 250
+        sidebar_rect = pygame.Rect(WIDTH - sidebar_width, 80, sidebar_width, HEIGHT - 80)
+        pygame.draw.rect(screen, COLORS['panel'], sidebar_rect)
+        pygame.draw.line(screen, COLORS['node_border'], 
+                        (WIDTH - sidebar_width, 80), (WIDTH - sidebar_width, HEIGHT), 1)
+        
+        # Sample title
+        sample_title = get_font(16, bold=True).render("Custom Sample", True, COLORS['text'])
+        title_rect = sample_title.get_rect(center=(WIDTH - sidebar_width//2, 110))
+        screen.blit(sample_title, title_rect)
+        
+        # Draw feature values
+        feature_y = 160
+        for i, (feature, value) in enumerate(zip(self.feature_names, self.custom_sample)):
+            feature_name = feature.split(' (')[0]
+            if len(feature_name) > 15:
+                feature_name = feature_name[:15] + "..."
+                
+            feature_text = f"{feature_name}:"
+            feature_surface = get_font(14).render(feature_text, True, COLORS['text_secondary'])
+            screen.blit(feature_surface, (WIDTH - sidebar_width + 15, feature_y + i * 30))
+            
+            value_text = f"{value:.2f}"
+            value_surface = get_font(14, bold=True).render(value_text, True, COLORS['text'])
+            value_rect = value_surface.get_rect(
+                midright=(WIDTH - 15, feature_y + i * 30 + 9))
+            screen.blit(value_surface, value_rect)
+        
+        # Draw prediction result
+        result_y = feature_y + len(self.feature_names) * 30 + 20
+        pygame.draw.line(screen, COLORS['node_border'], 
+                        (WIDTH - sidebar_width + 10, result_y - 10), 
+                        (WIDTH - 10, result_y - 10), 1)
+        
+        pred_label = get_font(16, bold=True).render("Prediction:", True, COLORS['text'])
+        screen.blit(pred_label, (WIDTH - sidebar_width + 15, result_y))
+        
+        pred_value = get_font(22, bold=True).render(self.target_names[self.custom_prediction], True, COLORS['accent'])
+        pred_rect = pred_value.get_rect(midright=(WIDTH - 15, result_y + 30))
+        screen.blit(pred_value, pred_rect)
+        
+        # Draw appropriate visualization
+        if self.show_predictions:
+            self._draw_custom_decision_paths(screen)
+        else:
+            self._draw_custom_voting_info(screen)
+    
+    def _predict_custom_sample(self):
+        if self.custom_sample is None or self.forest is None:
+            return
+        
+        # Reshape to match what the model expects (1 sample with multiple features)
+        X_custom = np.array([self.custom_sample])
+        
+        # Make prediction
+        self.custom_prediction, self.custom_paths = self.forest.predict_with_viz(X_custom)
+        self.custom_prediction = self.custom_prediction[0]  # Get single prediction
+        
+        # Switch to testing view to show visualization
+        self.state = "testing"
+        self.show_predictions = True  # Start with decision path view
+        
+        # Create a special mode where we use the custom sample
+        # instead of test data
+        self.using_custom_sample = True
+        
+        self._create_ui_elements()
     
     def _create_ui_elements(self):
         # Clear previous elements
         self.buttons = []
         self.sliders = []
+        self.input_fields = [] 
         
         if self.state == "setup":
           
@@ -78,6 +348,51 @@ class RandomForestVisualizer:
                 "About", "about", True, False
             )
             self.buttons.append(about_btn)
+        
+        elif self.state == "custom_input":
+            # Back button
+            back_btn = Button(
+                pygame.Rect(20, HEIGHT - 80, 180, 40),
+                "Back to Testing", "back_to_testing", True, False
+            )
+            self.buttons.append(back_btn)
+            
+            # Predict button
+            predict_btn = Button(
+                pygame.Rect(WIDTH//2 - 100, HEIGHT - 80, 200, 40),
+                "Predict", "predict_custom", True, True
+            )
+            self.buttons.append(predict_btn)
+            
+            # Find min/max ranges from the training data
+            feature_ranges = []
+            for i in range(len(self.feature_names)):
+                min_val = np.min(self.X[:, i])
+                max_val = np.max(self.X[:, i])
+                # Add padding
+                padding = (max_val - min_val) * 0.1
+                feature_ranges.append((min_val - padding, max_val + padding))
+            
+            # Calculate layout
+            input_width = 120
+            input_height = 30
+            input_spacing = 50
+            start_y = 180
+            
+            # Create input fields for each feature
+            for i, feature in enumerate(self.feature_names):
+                feature_name = feature.split(' (')[0]
+                if len(feature_name) > 20:
+                    feature_name = feature_name[:17] + "..."
+                    
+                input_field = InputField(
+                    pygame.Rect(WIDTH//2 + 100, start_y + i * input_spacing, input_width, input_height),
+                    initial_value=self.custom_sample[i] if self.custom_sample is not None else 0.0,
+                    label=feature_name,
+                    min_value=feature_ranges[i][0],
+                    max_value=feature_ranges[i][1]
+                )
+                self.input_fields.append(input_field)
 
         elif self.state == "training":
           
@@ -141,6 +456,12 @@ class RandomForestVisualizer:
                 "Back to Forest", "back_to_viz", True, False
             )
             self.buttons.append(back_btn)
+
+            custom_input_btn = Button(
+            pygame.Rect(220, HEIGHT - 80, 180, 40),
+            "Enter Custom Data", "custom_input", True, False
+            )
+            self.buttons.append(custom_input_btn)
             
      
             reset_btn = Button(
@@ -179,6 +500,49 @@ class RandomForestVisualizer:
                 )
                 self.buttons.append(reset_view_btn)
 
+        elif self.state == "custom_input":
+            # Back button
+            back_btn = Button(
+                pygame.Rect(20, HEIGHT - 80, 180, 40),
+                "Back to Testing", "back_to_testing", True, False
+            )
+            self.buttons.append(back_btn)
+            
+            # Predict button
+            predict_btn = Button(
+                pygame.Rect(WIDTH//2 - 100, HEIGHT - 80, 200, 40),
+                "Predict", "predict_custom", True, True
+            )
+            self.buttons.append(predict_btn)
+            
+
+            feature_ranges = []
+            for i in range(len(self.feature_names)):
+                min_val = np.min(self.X[:, i])
+                max_val = np.max(self.X[:, i])
+                # Add a bit of padding
+                padding = (max_val - min_val) * 0.1
+                feature_ranges.append((min_val - padding, max_val + padding))
+            
+            # Calculate layout
+            slider_width = 300
+            slider_height = 30
+            slider_spacing = 50
+            start_y = 150
+            
+            # Create sliders for each feature
+            for i, feature in enumerate(self.feature_names):
+                feature_name = feature.split(' (')[0]
+                if len(feature_name) > 20:
+                    feature_name = feature_name[:17] + "..."
+                    
+                slider = Slider(
+                    pygame.Rect(WIDTH//2 - slider_width//2, start_y + i * slider_spacing, slider_width, slider_height),
+                    feature_ranges[i][0], feature_ranges[i][1], 
+                    self.custom_sample[i] if self.custom_sample is not None else feature_ranges[i][0],
+                    feature_name
+                )
+                self.sliders.append(slider)
 
         elif self.state == "about":
 
@@ -270,6 +634,9 @@ class RandomForestVisualizer:
         for button in self.buttons:
             button.update(mouse_pos)
         
+        for input_field in self.input_fields:
+            input_field.update()
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False  
@@ -288,6 +655,12 @@ class RandomForestVisualizer:
                         self.n_trees = int(slider.value)
                     elif slider.label == "Max Tree Depth":
                         self.max_depth = int(slider.value)
+            
+            for i, input_field in enumerate(self.input_fields):
+                if input_field.handle_event(event):
+                    # Update the custom sample with the input field value
+                    if self.state == "custom_input" and self.custom_sample is not None and i < len(self.custom_sample):
+                        self.custom_sample[i] = input_field.value
             
             # Handle zooming with mouse wheel
             if event.type == pygame.MOUSEWHEEL:
@@ -387,6 +760,11 @@ class RandomForestVisualizer:
             
         elif action == "test_forest":
             self.test_forest()
+        
+        elif action == "back_to_testing":
+            self.state = "testing"
+            self.using_custom_sample = False  # Reset to regular test samples
+            self._create_ui_elements()
             
         elif action == "prev_tree":
             if self.selected_tree > 0:
@@ -429,6 +807,18 @@ class RandomForestVisualizer:
         elif action == "back_from_about":
             self.state = "setup"
             self._create_ui_elements()
+
+        elif action == "custom_input":
+            self.state = "custom_input"
+            self.custom_sample = np.zeros(len(self.feature_names))
+            self._create_ui_elements()
+            
+        elif action == "predict_custom":
+            self._predict_custom_sample()
+            
+        elif action == "back_to_testing":
+            self.state = "testing"
+            self._create_ui_elements()
             
         elif action == "reset_view":
             self.reset_view()
@@ -449,10 +839,68 @@ class RandomForestVisualizer:
                 
                 if self.viz_step < max_steps:
                     self.viz_step += 1
+
+    def _draw_custom_input(self, screen):
+        """Draw custom input interface"""
+        # Draw title
+        title = get_font(24, bold=True).render("Enter Custom Sample Data", True, COLORS['text'])
+        title_rect = title.get_rect(center=(WIDTH//2, 100))
+        screen.blit(title, title_rect)
+        
+        # Draw panel
+        panel = pygame.Rect(WIDTH//2 - 400, 150, 800, HEIGHT - 250)
+        pygame.draw.rect(screen, COLORS['panel'], panel, border_radius=5)
+        
+        # Draw instruction
+        instruction = get_font(16).render("Enter values for each feature", True, COLORS['text'])
+        inst_rect = instruction.get_rect(center=(WIDTH//2, 150))
+        screen.blit(instruction, inst_rect)
+        
+        # Draw feature labels on the left side
+        input_spacing = 50
+        start_y = 180
+        
+        for i, feature in enumerate(self.feature_names):
+            feature_name = feature.split(' (')[0]
+            if len(feature_name) > 20:
+                feature_name = feature_name[:17] + "..."
+            
+            # Draw feature name on the left
+            feature_surface = get_font(14).render(feature_name + ":", True, COLORS['text'])
+            feature_rect = feature_surface.get_rect(
+                midright=(WIDTH//2 + 80, start_y + i * input_spacing + 15))
+            screen.blit(feature_surface, feature_rect)
+        
+        # Draw all input fields
+        for input_field in self.input_fields:
+            input_field.draw(screen)
+        
+        # If made a prediction, show it
+        if self.custom_prediction is not None:
+            prediction = self.target_names[self.custom_prediction]
+            pred_text = f"Prediction: {prediction}"
+            pred_surface = get_font(20, bold=True).render(pred_text, True, COLORS['accent'])
+            pred_rect = pred_surface.get_rect(center=(WIDTH//2, HEIGHT - 130))
+            screen.blit(pred_surface, pred_rect)
     
     def draw(self, screen):
         """Draw the current state of the visualizer"""
         screen.fill(COLORS['background'])
+
+
+
+
+                
+        if self.state == "setup":
+            self._draw_setup(screen)
+        elif self.state == "training":
+            self._draw_training(screen)
+        elif self.state == "testing":
+            self._draw_testing(screen)
+        elif self.state == "about":
+            self._draw_about(screen)
+        elif self.state == "custom_input":
+            self._draw_custom_input(screen)
         
         # Draw a header area
         header_rect = pygame.Rect(0, 0, WIDTH, 80)
@@ -492,6 +940,9 @@ class RandomForestVisualizer:
             
         for button in self.buttons:
             button.draw(screen)
+
+        for input_field in self.input_fields:
+            input_field.draw(screen)
     
     def _draw_setup(self, screen):
         """Draw setup screen"""
@@ -732,57 +1183,96 @@ class RandomForestVisualizer:
         if not self.forest or self.test_predictions is None:
             return
             
-
+        if self.using_custom_sample and self.custom_prediction is not None:
+            self._draw_custom_testing(screen)
+            return
+        
+        # Accuracy display at top
         accuracy = np.sum(self.test_predictions == self.y_test) / len(self.y_test) * 100
         accuracy_text = f"Accuracy: {accuracy:.1f}%"
         accuracy_surface = get_font(18, bold=True).render(accuracy_text, True, COLORS['text'])
         accuracy_rect = accuracy_surface.get_rect(center=(WIDTH//2, 120))
         screen.blit(accuracy_surface, accuracy_rect)
         
-
+        # Draw sidebar
         sidebar_width = 250
         sidebar_rect = pygame.Rect(WIDTH - sidebar_width, 80, sidebar_width, HEIGHT - 80)
         pygame.draw.rect(screen, COLORS['panel'], sidebar_rect)
         pygame.draw.line(screen, COLORS['node_border'], 
                         (WIDTH - sidebar_width, 80), (WIDTH - sidebar_width, HEIGHT), 1)
         
-
+        # Sample title
         sample_title = get_font(16, bold=True).render("Sample Information", True, COLORS['text'])
         title_rect = sample_title.get_rect(center=(WIDTH - sidebar_width//2, 110))
         screen.blit(sample_title, title_rect)
         
-
+        # Sample number
         sample_text = f"Sample {self.selected_test_sample + 1} of {len(self.X_test)}"
         sample_surface = get_font(14).render(sample_text, True, COLORS['text'])
         sample_rect = sample_surface.get_rect(center=(WIDTH - sidebar_width//2, 140))
         screen.blit(sample_surface, sample_rect)
         
-
+        # Create scrollable content area for features
+        features_panel = pygame.Rect(WIDTH - sidebar_width + 10, 170, sidebar_width - 20, HEIGHT - 330)
+        pygame.draw.rect(screen, COLORS['background'], features_panel, border_radius=3)
+        
+        # Draw feature values with better spacing and alignment
         x_sample = self.X_test[self.selected_test_sample]
         feature_y = 180
+        
+        # Calculate column widths
+        name_col_width = sidebar_width * 0.6
+        value_col_width = sidebar_width * 0.3
+        
+        # Draw header row
+        header_bg = pygame.Rect(WIDTH - sidebar_width + 10, feature_y - 5, sidebar_width - 20, 25)
+        pygame.draw.rect(screen, COLORS['primary_dark'], header_bg, border_radius=3)
+        
+        name_header = get_font(12, bold=True).render("Feature", True, COLORS['background'])
+        screen.blit(name_header, (WIDTH - sidebar_width + 20, feature_y))
+        
+        value_header = get_font(12, bold=True).render("Value", True, COLORS['background'])
+        value_rect = value_header.get_rect(midright=(WIDTH - 20, feature_y + 10))
+        screen.blit(value_header, value_rect)
+        
+        # Draw features with alternating backgrounds
         for i, (feature, value) in enumerate(zip(self.feature_names, x_sample)):
+            if i >= 7:  # Show max 7 features to avoid overcrowding
+                more_text = f"+ {len(self.feature_names) - 7} more features"
+                more_surface = get_font(12).render(more_text, True, COLORS['text_secondary'])
+                more_rect = more_surface.get_rect(center=(WIDTH - sidebar_width//2, feature_y + (i+1) * 30))
+                screen.blit(more_surface, more_rect)
+                break
+                
+            row_y = feature_y + 25 + i * 30
+            
+            # Alternating row background
+            if i % 2 == 0:
+                row_bg = pygame.Rect(WIDTH - sidebar_width + 10, row_y - 5, sidebar_width - 20, 30)
+                pygame.draw.rect(screen, COLORS['panel'], row_bg)
+            
+            # Feature name (left aligned)
             feature_name = feature.split(' (')[0]
             if len(feature_name) > 15:
                 feature_name = feature_name[:15] + "..."
-                
-
-            feature_text = f"{feature_name}:"
-            feature_surface = get_font(14).render(feature_text, True, COLORS['text_secondary'])
-            screen.blit(feature_surface, (WIDTH - sidebar_width + 15, feature_y + i * 30))
             
+            feature_text = f"{feature_name}"
+            feature_surface = get_font(13).render(feature_text, True, COLORS['text_secondary'])
+            screen.blit(feature_surface, (WIDTH - sidebar_width + 20, row_y))
+            
+            # Feature value (right aligned)
             value_text = f"{value:.2f}"
             value_surface = get_font(14, bold=True).render(value_text, True, COLORS['text'])
-            value_rect = value_surface.get_rect(
-                midright=(WIDTH - 15, feature_y + i * 30 + 9))
+            value_rect = value_surface.get_rect(midright=(WIDTH - 20, row_y + 10))
             screen.blit(value_surface, value_rect)
-            
-
-        result_y = feature_y + 4 * 30 + 20
+        
+        # Draw prediction results at the bottom (separated from features)
+        result_y = HEIGHT - 150
         pygame.draw.line(screen, COLORS['node_border'], 
                         (WIDTH - sidebar_width + 10, result_y - 10), 
                         (WIDTH - 10, result_y - 10), 1)
         
-
+        # Draw true class and prediction
         true_class = self.y_test[self.selected_test_sample]
         pred_class = self.test_predictions[self.selected_test_sample]
         
@@ -803,7 +1293,7 @@ class RandomForestVisualizer:
         pred_rect = pred_value.get_rect(midright=(WIDTH - 15, result_y + 30 + 9))
         screen.blit(pred_value, pred_rect)
         
-
+        # Draw appropriate visualization
         if self.show_predictions:
             self._draw_decision_paths(screen)
         else:
@@ -962,11 +1452,8 @@ class RandomForestVisualizer:
                 
               
                 if class_idx == self.test_predictions[self.selected_test_sample]:
-                    # Use accent color for the winning prediction
                     fill_color = COLORS['accent'] 
                 else:
-                    # Use primary color with varying opacity for all other classes
-                    # This creates a consistent look regardless of number of classes
                     fill_color = COLORS['primary']
                 
                 pygame.draw.rect(screen, fill_color, fill_rect, border_radius=5)
