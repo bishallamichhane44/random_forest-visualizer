@@ -673,7 +673,7 @@ class RandomForestVisualizer:
         if self.selected_tree < self.forest.current_tree_index:
             param_text = f"Depth: {self.max_depth} | Features: {self.forest.trees[self.selected_tree].n_features}"
             param_surface = get_font(14).render(param_text, True, COLORS['text_secondary'])
-            param_rect = param_surface.get_rect(topleft=(content_x, 100))
+            param_rect = param_surface.get_rect(topleft=(content_x, 120))
             screen.blit(param_surface, param_rect)
             
             # Create a clipping rect for the tree visualization area
