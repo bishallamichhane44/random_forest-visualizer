@@ -296,8 +296,20 @@ class RandomForestVisualizer:
             self._draw_custom_voting_info(screen)
     
     def _predict_custom_sample(self):
-        if self.custom_sample is None or self.forest is None:
+        """Make a prediction on the custom input sample"""
+        if self.forest is None:
             return
+        
+   
+        if self.custom_sample is None:
+            self.custom_sample = np.zeros(len(self.feature_names))
+        
+        # Update custom_sample with current values from input fields
+        for i, input_field in enumerate(self.input_fields):
+            if i < len(self.custom_sample):
+                self.custom_sample[i] = input_field.value
+        
+        print("Custom sample values:", self.custom_sample)  # Debug output
         
         # Reshape to match what the model expects (1 sample with multiple features)
         X_custom = np.array([self.custom_sample])
@@ -311,7 +323,6 @@ class RandomForestVisualizer:
         self.show_predictions = True  # Start with decision path view
         
         # Create a special mode where we use the custom sample
-        # instead of test data
         self.using_custom_sample = True
         
         self._create_ui_elements()
@@ -500,49 +511,6 @@ class RandomForestVisualizer:
                 )
                 self.buttons.append(reset_view_btn)
 
-        elif self.state == "custom_input":
-            # Back button
-            back_btn = Button(
-                pygame.Rect(20, HEIGHT - 80, 180, 40),
-                "Back to Testing", "back_to_testing", True, False
-            )
-            self.buttons.append(back_btn)
-            
-            # Predict button
-            predict_btn = Button(
-                pygame.Rect(WIDTH//2 - 100, HEIGHT - 80, 200, 40),
-                "Predict", "predict_custom", True, True
-            )
-            self.buttons.append(predict_btn)
-            
-
-            feature_ranges = []
-            for i in range(len(self.feature_names)):
-                min_val = np.min(self.X[:, i])
-                max_val = np.max(self.X[:, i])
-                # Add a bit of padding
-                padding = (max_val - min_val) * 0.1
-                feature_ranges.append((min_val - padding, max_val + padding))
-            
-            # Calculate layout
-            slider_width = 300
-            slider_height = 30
-            slider_spacing = 50
-            start_y = 150
-            
-            # Create sliders for each feature
-            for i, feature in enumerate(self.feature_names):
-                feature_name = feature.split(' (')[0]
-                if len(feature_name) > 20:
-                    feature_name = feature_name[:17] + "..."
-                    
-                slider = Slider(
-                    pygame.Rect(WIDTH//2 - slider_width//2, start_y + i * slider_spacing, slider_width, slider_height),
-                    feature_ranges[i][0], feature_ranges[i][1], 
-                    self.custom_sample[i] if self.custom_sample is not None else feature_ranges[i][0],
-                    feature_name
-                )
-                self.sliders.append(slider)
 
         elif self.state == "about":
 

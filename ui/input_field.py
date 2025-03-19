@@ -30,7 +30,6 @@ class InputField:
                 return True
             else:
                 self.active = False
-                # Validate and update value when clicking away
                 self._validate_and_update()
                 return False
                 
@@ -74,7 +73,7 @@ class InputField:
                     new_value = min(new_value, self.max_value)
                     
                 self.value = new_value
-                self.text = f"{new_value:.2f}"  
+                self.text = f"{new_value:.2f}" 
             else:
                 # If empty, set to min value or 0
                 self.value = self.min_value if self.min_value is not None else 0.0
