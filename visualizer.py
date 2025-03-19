@@ -495,7 +495,7 @@ class RandomForestVisualizer:
     
     def _draw_setup(self, screen):
         """Draw setup screen"""
-
+        # Display title and instructions
         instructions = [
             "Configure your Random Forest parameters:",
          
@@ -507,8 +507,27 @@ class RandomForestVisualizer:
             text_rect = text_surface.get_rect(center=(WIDTH//2, y_offset))
             screen.blit(text_surface, text_rect)
         
-
-        self._draw_dataset_preview(screen, 450)
+        # Draw dataset info panel
+        info_panel = pygame.Rect(WIDTH//2 - 300, 350, 600, 180)
+        pygame.draw.rect(screen, COLORS['panel'], info_panel, border_radius=5)
+        
+        # Dataset title
+        dataset_title = get_font(18, bold=True).render("Dataset Information", True, COLORS['text'])
+        title_rect = dataset_title.get_rect(center=(WIDTH//2, 375))
+        screen.blit(dataset_title, title_rect)
+        
+        # Draw dataset statistics
+        stats = [
+            f"Features: {len(self.feature_names)} ({', '.join(self.feature_names[:3])}{'...' if len(self.feature_names) > 3 else ''})",
+            f"Classes: {len(self.target_names)} total",
+            f"Samples: {len(self.X)} ({len(self.X_train)} training, {len(self.X_test)} testing)"
+        ]
+        
+        for i, stat in enumerate(stats):
+            y_pos = 410 + i * 30
+            stat_surface = get_font(16).render(stat, True, COLORS['text'])
+            stat_rect = stat_surface.get_rect(center=(WIDTH//2, y_pos))
+            screen.blit(stat_surface, stat_rect)
     
     def _draw_dataset_preview(self, screen, y_start):
         """Draw a preview of the dataset"""
@@ -943,12 +962,12 @@ class RandomForestVisualizer:
                 
               
                 if class_idx == self.test_predictions[self.selected_test_sample]:
-           
-                    fill_color = COLORS['accent']
+                    # Use accent color for the winning prediction
+                    fill_color = COLORS['accent'] 
                 else:
-                
-                    class_colors = [COLORS['feature_1'], COLORS['feature_2'], COLORS['feature_3']]
-                    fill_color = class_colors[class_idx % len(class_colors)]
+                    # Use primary color with varying opacity for all other classes
+                    # This creates a consistent look regardless of number of classes
+                    fill_color = COLORS['primary']
                 
                 pygame.draw.rect(screen, fill_color, fill_rect, border_radius=5)
             
