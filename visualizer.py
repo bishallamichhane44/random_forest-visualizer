@@ -2,6 +2,7 @@ import pygame
 import numpy as np
 from pygame.rect import Rect
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_recall_fscore_support, classification_report, accuracy_score
 
 from models.random_forest import RandomForest
 from ui.button import Button
@@ -577,7 +578,18 @@ class RandomForestVisualizer:
         
 
         accuracy = np.sum(self.test_predictions == self.y_test) / len(self.y_test)
-        print(f"Accuracy: {accuracy:.4f}")
+        precision, recall, f1, _ = precision_recall_fscore_support(
+        self.y_test, self.test_predictions, average='weighted'
+            )
+        
+        print("\n" + "="*50)
+        print("MODEL EVALUATION METRICS")
+        print("="*50)
+        print(f"Accuracy:  {accuracy:.4f}")
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall:    {recall:.4f}")
+        print(f"F1 Score:  {f1:.4f}")
+        print("="*50)
         
       
         self.state = "testing"
